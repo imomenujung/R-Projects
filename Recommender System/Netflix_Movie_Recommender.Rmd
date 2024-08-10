@@ -1,0 +1,234 @@
+---
+title: "Netflix Movie Recommender"
+author: "Fadly"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: simplex
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Sekilas Projek
+
+Proyek ini bertujuan untuk membangun sistem rekomendasi film yang mampu memberikan rekomendasi film berdasarkan rating yang telah diberikan pada film tertentu oleh pengguna. Sistem rekomendasi ini menggunakan data yang diambil dari situs Kaggle, yang mencakup informasi tentang rating yang diberikan oleh pengguna Netflix untuk berbagai film. Dengan menggunakan berbagai teknik pemodelan seperti cosine similarity dan UV decomposition, proyek ini akan mengevaluasi kinerja model dalam memprediksi rating film yang belum dilihat oleh pengguna. Hasil dari model ini diharapkan dapat memberikan rekomendasi film yang lebih personal dan relevan bagi pengguna.
+
+Link data: [Netflix Movie Rating Dataset](https://www.kaggle.com/datasets/rishitjavia/netflix-movie-rating-dataset?select=Netflix_Dataset_Rating.csv)
+
+# Praproses Analisis
+## Library yang akan digunakan
+```{r}
+library(tidyverse) # functions for data manipulation   
+library(recommenderlab) # function for recommendation systems
+```
+
+## Data yang diperlukan
+
+```{r}
+data <- read.csv('/home/faggluyy/Documents/Documents/Data/Netflix_Dataset_Rating.csv')
+detail_film <- read.csv('/home/faggluyy/Documents/GitHub/R-Projects/Recommender System/Netflix_Dataset_Movie.csv')
+head(data)
+```
+
+## Pemangkasan Data
+Karena data terlalu banyak dan tidak bisa digunakan seluruhnya maka dilakukan proses pemangkasan data. Dimana pemangkasan dilakukan dengan cara mengambil data dengan 50 film tertinggi popularitasnya berdasarkan data yang ada.
+
+```{r}
+# Hitung frekuensi setiap movie_id
+movie_counts <- data %>%
+  group_by(Movie_ID) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+# Dapatkan 50 movie ID teratas
+top_50_movies <- movie_counts %>%
+  top_n(50, wt = count)
+
+# Ambil hanya movie_id dari top 50 movies
+top_50_movie_ids <- top_50_movies$Movie_ID
+
+# Filter dataset untuk hanya menyertakan movie_id yang ada di top 50
+filtered_data <- data %>%
+  filter(Movie_ID %in% top_50_movie_ids)
+
+head(filtered_data)
+```
+
+## Pengonversian ke dalam Matriks
+Data yang sudah dipangkas kemudian diubah menjadi matriks dimana barisnya berisi ID pengguna dan kolomnya berisi ID Film
+
+```{r}
+# Membentuk matrix dari data
+ratings_matrix <- filtered_data %>%
+  pivot_wider(names_from = Movie_ID, values_from = Rating)
+
+
+ratings_matrix <- as.data.frame(ratings_matrix)
+# Ubah User ID menjadi rownames
+rownames(ratings_matrix) <- ratings_matrix$User_ID
+ratings_matrix <- as.matrix(ratings_matrix[, -1])
+
+# Menampilkan matriks rating
+head(ratings_matrix)
+```
+Setelah itu matriks dikonvert lagi kedalam bentuk recommenderlab realRatingMatrix sebagai syarat input
+
+## Proses Sampling
+Karena keterbatasan memori dilakukan sampling sebanyak 500 amatan dimata amatan dipilih secara acak
+```{r}
+set.seed(123)  # Set seed for reproducibility
+sampled_matrix <- ratings_matrix[sample(1:nrow(ratings_matrix), 500, replace = FALSE), ]
+
+# Check the dimensions of the sampled matrix to ensure it's correct
+dim(sampled_matrix)
+```
+
+matriks hasil sampling dikonvert kedalam bentuk recommenderlab realRatingMatrix sebagai syarat input
+
+```{r}
+# convert matrix to a recommenderlab realRatingMatrix
+rmat_sampled <- as(sampled_matrix, "realRatingMatrix")
+```
+
+## Pemisahan Data 
+Data dipisah menjadi data latih dan data uji dengan proporsi 8:2
+
+```{r}
+set.seed(6030)
+
+# split the data into the training and the test set:
+split_data <- evaluationScheme(
+  rmat_sampled, 
+  method="split", 
+  train=0.8, 
+  k=1, 
+  given=10, 
+  goodRating=3
+)
+```
+
+# Pemodelan Sistem Rekomendasi
+
+Dalam pemodelan ini tiga pendekatan berbeda dibangun untuk sistem rekomendasi.
+
+Pendekatan pertama menggunakan cosine similarity tanpa normalisasi, di mana kemiripan antara pengguna dihitung berdasarkan sudut antara vektor rating mereka. Pendekatan kedua menggunakan cosine similarity yang dinormalisasi dengan mengurangkan rata-rata rating pengguna, sehingga lebih fokus pada perbedaan preferensi relatif daripada preferensi absolut.
+
+Pendekatan ketiga adalah dekomposisi UV menggunakan Singular Value Decomposition (SVD), yang merupakan metode yang lebih kompleks. SVD mengurangi dimensi data dengan mengidentifikasi pola utama dalam rating pengguna terhadap item, yang memungkinkan sistem untuk menangkap hubungan laten antara pengguna dan item.
+
+```{r}
+set.seed(6030)
+# Non-normalized cosine
+netflix_reco <- Recommender(getData(split_data, "train"), "UBCF", 
+      param=list(normalize = NULL, method="Cosine"))
+
+# Normalized centered cosine
+netflix_reco_centered <- Recommender(getData(split_data, "train"), "UBCF", 
+      param=list(normalize = "center", method="Cosine"))
+
+# UV decomposition
+netflix_reco_uv <- Recommender(getData(split_data, "train"), "SVDF", 
+      param=list(k = 4))
+```
+
+# Prediksi dan Evaluasi
+
+Ketiga model diprediksi menggunakan data uji. Dalam evaluasi sistem rekomendasi, penting untuk mengukur seberapa akurat prediksi model dalam memprediksi rating yang sebenarnya diberikan oleh pengguna. Untuk melakukan ini, kita menggunakan beberapa metrik error, yaitu Root Mean Squared Error (RMSE), Mean Squared Error (MSE), dan Mean Absolute Error (MAE).
+
+1. **RMSE (Root Mean Squared Error)**: Metrik ini mengukur akar dari rata-rata kesalahan kuadrat antara prediksi dan rating sebenarnya. RMSE memberikan penalti yang lebih besar untuk kesalahan yang lebih besar, sehingga lebih sensitif terhadap outlier. Penggunaan RMSE membantu kita memahami seberapa besar rata-rata deviasi prediksi model dari nilai sebenarnya dalam skala yang sama dengan rating.
+2. **MSE (Mean Squared Error)**: Ini adalah nilai rata-rata dari kesalahan kuadrat antara prediksi dan rating sebenarnya. Meskipun MSE sering digunakan dalam pembelajaran mesin, interpretasinya dalam konteks rating bisa sedikit lebih sulit karena skala error adalah kuadrat dari skala rating.
+3. *MAE (Mean Absolute Error)**: Metrik ini menghitung rata-rata dari kesalahan absolut antara prediksi dan rating sebenarnya. Tidak seperti RMSE, MAE lebih robust terhadap outlier karena tidak mengkuadratkan error. MAE memberikan gambaran langsung mengenai seberapa jauh prediksi rata-rata dari nilai yang sebenarnya.
+
+
+```{r}
+netflix_predictions <- predict(netflix_reco, getData(split_data, "known"), type="ratings")
+netflix_predictions_centered <- predict(netflix_reco_centered, getData(split_data, "known"), type="ratings")
+netflix_predictions_uv <- predict(netflix_reco_uv, getData(split_data, "known"), type="ratings")
+
+error_results <- rbind(
+  cosine = calcPredictionAccuracy(netflix_predictions, getData(split_data, "unknown")),
+  cosine_normalized = calcPredictionAccuracy(netflix_predictions_centered, getData(split_data, "unknown")),
+  uv = calcPredictionAccuracy(netflix_predictions_uv, getData(split_data, "unknown"))
+)
+error_results
+```
+
+Dari error yang didapatkan Model UV decomposition adalah yang paling unggul dalam meminimalkan kesalahan prediksi berdasarkan hasil dari ketiga metrik yang digunakan. Model ini memberikan prediksi yang lebih akurat dan dapat lebih dipercaya untuk digunakan dalam sistem rekomendasi. Sementara itu, penggunaan normalisasi pada model cosine similarity juga memberikan peningkatan kinerja yang signifikan dibandingkan dengan model tanpa normalisasi.
+
+# Pengaplikasian pada seluruh data
+
+Sistem Rekomendasi akan diaplikasikan menggunakan keseluruhan data yang ada (data yang telah dipangkas berdasarkan 50 film populer)
+
+
+## Proses Pemodelan
+
+```{r}
+set.seed(6030)
+# Non-normalized cosine
+reco <- Recommender(rmat_sampled, "UBCF", 
+      param=list(normalize = NULL, method="Cosine"))
+
+# Normalized centered cosine
+reco_centered <- Recommender(rmat_sampled, "UBCF", 
+      param=list(normalize = "center", method="Cosine"))
+
+# UV decomposition
+reco_uv <- Recommender(rmat_sampled, "SVDF", 
+      param=list(k = 4))
+```
+
+## Prediksi Film Rekomendasi untuk 1 pengguna
+
+```{r}
+# Misalkan user id = 584538 yang ingin kita prediksi
+user_id <- "584538" 
+
+# Prediksi rating untuk user_id ini terhadap semua movie_id menggunakan model reco (non-normalized cosine)
+predictions <- predict(reco_uv, rmat_sampled[user_id, ], type = "ratings")
+
+# Konversi hasil prediksi menjadi matrix
+predicted_ratings <- as(predictions, "matrix")
+```
+
+## Hasil Prediksi
+
+Berikut hasil prediksi kotornya
+```{r}
+# Menampilkan prediksi rating
+print(predicted_ratings)
+```
+
+
+```{r}
+# konversi menjadi dataframe
+predicted_ratings_df <- as.data.frame(predicted_ratings)
+
+# Membalik kolom menjadi baris dengan pivot_longer
+long_df <- pivot_longer(predicted_ratings_df, 
+                        cols = everything(), 
+                        names_to = "Movie_ID", 
+                        values_to = "Rating")
+
+# Mengubah kolom Movie_ID menjadi numeric
+long_df <- long_df %>%
+  mutate(Movie_ID = as.numeric(Movie_ID))
+
+# Sortir dari nilai Rating terbesar
+df_sorted <- long_df %>%
+  filter(!is.na(Rating)) %>%
+  arrange(desc(Rating))
+
+# Menggabungkan dan mengganti Movie_ID dengan Movie_Name
+final_df <- df_sorted %>%
+  left_join(detail_film, by = "Movie_ID") %>%
+  select(Name, Rating)
+
+# Menampilkan hasil
+print(final_df)
+```
+
+Semakin tinggi nilai Rating maka film semakin cocok untuk direkomendasikan. Pada kasus user_id = 584538 film The Bourne Supremacy merupakan yang paling direkomendasikan

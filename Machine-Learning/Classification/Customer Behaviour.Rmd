@@ -1,0 +1,575 @@
+---
+title: "Customer-Behaviour"
+author: "Fadly"
+date: "2024-08-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(Boruta)
+library(caret)
+library(DMwR)
+library(randomForest)
+library(xgboost)
+library(dplyr)
+```
+
+```{r}
+data <- read.csv("/home/faggluyy/Documents/GitHub/R-Projects/Machine-Learning/Classification/ecommerce_customer_data_large.csv")
+head(data)
+```
+
+```{r}
+str(data)
+```
+
+```{r}
+# Check for missing values
+sum(is.na(data))
+```
+
+```{r}
+na_count <- sapply(data, function(x) sum(is.na(x)))
+print(na_count)
+```
+
+```{r}
+# Hapus Baris Na
+cleaned_data <- na.omit(data)
+```
+
+```{r}
+# Investigate the redundancy between 'Customer Age' and 'Age'
+cleaned_data %>%
+  summarise(all_equal = all(Customer.Age == Age))
+```
+
+```{r}
+# they are the same, we can drop one of the columns
+cleaned_data <- cleaned_data %>% select(-Customer.Age)
+# View the changes
+head(cleaned_data)
+```
+
+```{r}
+# Summary statistics for numerical columns (excluding Churn)
+numerical_cols <- sapply(cleaned_data, is.numeric) & names(cleaned_data) != "Churn"
+summary(cleaned_data[, numerical_cols])
+```
+
+```{r}
+# Define the specific columns for which we want frequency tables
+selected_cols <- c("Product.Category", "Payment.Method", "Returns", "Gender", "Churn")
+```
+
+```{r}
+# Frequency counts for the selected columns
+for (col_name in selected_cols) {
+  cat("\nFrequency table for", col_name, ":\n")
+  print(table(cleaned_data[[col_name]]))
+}
+```
+
+```{r}
+# Convert the 'Purchase Date' column to a date format (without time)
+cleaned_data$Purchase.Date <- as.Date(cleaned_data$Purchase.Date)
+head(cleaned_data)
+```
+
+```{r}
+# Convert 'Churn' and 'Returns' to a factor (or character)
+cleaned_data$Churn <- as.factor(cleaned_data$Churn)
+cleaned_data$Returns <- as.factor(cleaned_data$Returns)
+```
+
+```{r}
+# Create a long format of the data for the selected categorical variables
+data_long <- cleaned_data %>%
+  select(Product.Category, Payment.Method, Gender, Churn, Returns) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+```
+
+```{r}
+# Create bar plots for each variable using facets
+ggplot(data_long, aes(x = Value)) +
+  geom_bar() +
+  facet_wrap(~ Variable, scales = "free_x") +
+  theme_minimal() +
+  labs(title = "Bar Plots for Categorical Variables", x = "", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Create a bar graph for Churn by Gender
+ggplot(cleaned_data, aes(x = Gender, fill = as.factor(Churn))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Bar Graph of Churn by Gender", x = "Gender", y = "Count", fill = "Churn") +
+  theme_minimal()
+```
+
+```{r}
+# Create a bar graph for Returns by Gender
+ggplot(cleaned_data, aes(x = Gender, fill = as.factor(Returns))) +
+  geom_bar(position = "dodge") +
+  labs(title = "Bar Graph of Returns by Gender", x = "Gender", y = "Count", fill = "Returns") +
+  theme_minimal()
+```
+
+```{r}
+# Bar Graph for Count of Sales per Product Category
+ggplot(cleaned_data, aes(x = `Product.Category`)) +
+  geom_bar() +
+  labs(title = "Count of Sales per Product Category", x = "Product Category", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Boxplot for Sales Amount by Product Category
+ggplot(cleaned_data, aes(x = `Product.Category`, y = `Total.Purchase.Amount`)) +
+  geom_boxplot() +
+  labs(title = "Sales Amount by Product Category", x = "Product Category", y = "Total Purchase Amount") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#historgram for numerical variables
+
+# Create a long format of the data for the selected numerical variables
+data_long_num <- cleaned_data %>%
+  select(Product.Price, Quantity, Age) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+# Create histograms for each variable using facets
+ggplot(data_long_num, aes(x = Value)) +
+  geom_histogram(bins = 30, fill = "blue", color = "black") +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  labs(title = "Histograms for Numerical Variables", x = "", y = "Frequency")
+```
+
+```{r}
+# Create a boxplot for Age by Churn
+ggplot(cleaned_data, aes(x = as.factor(Churn), y = Age)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Age by Churn", x = "Churn", y = "Age") +
+  theme_minimal()
+```
+
+```{r}
+# Create a boxplot for Age by Return
+ggplot(cleaned_data, aes(x = as.factor(Returns), y = Age)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Age by Churn", x = "Returns", y = "Age") +
+  theme_minimal()
+```
+
+```{r}
+#pie charts
+
+# Function to create a pie chart with percentage labels for a given variable
+create_pie_chart <- function(cleaned_data, variable_name) {
+  pie_data <- cleaned_data %>%
+    count(!!sym(variable_name)) %>%
+    mutate(Percentage = n / sum(n) * 100)
+  
+  ggplot(pie_data, aes(x = "", y = n, fill = !!sym(variable_name))) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar("y", start = 0) +
+    geom_text(aes(label = paste0(round(Percentage, 1), "%")), 
+              position = position_stack(vjust = 0.5)) +
+    labs(title = paste("Pie Chart of", variable_name), x = NULL, y = NULL, fill = variable_name) +
+    theme_minimal() +
+    theme(axis.line = element_blank(), axis.text = element_blank(), axis.ticks = element_blank(), 
+          legend.position = "bottom")
+}
+
+# Create pie charts with percentages
+create_pie_chart(cleaned_data, "Churn")
+```
+
+
+```{r}
+create_pie_chart(cleaned_data, "Returns")
+```
+```{r}
+create_pie_chart(cleaned_data, "Gender")
+```
+
+```{r}
+#correlaiton
+# Selecting only numerical variables for correlation analysis
+numerical_vars <- cleaned_data %>% select(`Product.Price`, Quantity, `Total.Purchase.Amount`, `Age`)
+
+# Calculate the correlation matrix
+cor_matrix <- cor(numerical_vars, use = "complete.obs")
+
+# Visualizing the correlation matrix
+corrplot(cor_matrix, method = "circle", type = "upper", order = "hclust",
+         tl.col = "black", tl.srt = 45, addCoef.col = "black")
+```
+
+
+```{r}
+# Categorizing Age into groups
+cleaned_data$AgeGroup <- cut(cleaned_data$Age, breaks = c(18, 25, 35, 45, 55, 65, Inf), 
+                   labels = c("18-25", "26-35", "36-45", "46-55", "56-65", "65+"), right = FALSE)
+
+# Analysis 1: Purchasing Patterns by Age Group
+age_group_analysis <- cleaned_data %>%
+  group_by(AgeGroup) %>%
+  summarise(AverageSpend = mean(Total.Purchase.Amount),
+            TotalPurchases = n())
+
+# Analysis 2: Purchasing Behavior by Gender
+gender_analysis <- cleaned_data %>%
+  group_by(Gender) %>%
+  summarise(AverageSpend = mean(Total.Purchase.Amount),
+            TotalPurchases = n())
+
+# Output the results
+print(age_group_analysis)
+```
+
+```{r}
+print(gender_analysis)
+```
+```{r}
+#add month number and year number
+new_data <- cleaned_data %>% mutate(month_number = format(as.Date(Purchase.Date), "%m")) %>%
+                mutate(year_number = format(as.Date(Purchase.Date), "%Y"))
+new_data <- new_data[order(new_data$Purchase.Date), ]
+
+#create new collomn for purchase date to change it into first of the month
+new_data$Purchase_Date <- paste(new_data$year_number, new_data$month_number, '01', sep = "-")
+new_data$Purchase_Date <- as.Date(new_data$Purchase_Date)
+
+#filter unfinished month transaction
+new_data <- new_data %>% filter(Purchase_Date < as.Date("2023-09-01"))
+
+#aggregate the data for Purchase_Date, month_number,year_number to summarise total amount
+new_data <- new_data %>% group_by(Purchase_Date, month_number, year_number) %>% summarise(total_amount = sum(Total.Purchase.Amount))
+```
+
+```{r}
+new_data
+```
+
+
+```{r}
+# Split the data into training and testing sets
+test_1 <- new_data %>% filter(Purchase_Date >= as.Date("2022-08-01")) 
+# Training set
+train_1 <- new_data %>% filter(Purchase_Date < as.Date("2022-08-01"))
+  
+# add new column to specify the value type
+train_1$type <- "Train"
+test_1$type <- "Test"
+
+# create data frame to display year range of test and train data
+train_test <- rbind(train_1, test_1)
+
+#create model for total_amount using purchase date and month number as predictor
+M1_1 <- lm(total_amount~ Purchase_Date + month_number, data =train_1)
+#create model for total_amount using month number as predictor
+M1_2 <- lm(total_amount~month_number, data =train_1)
+#create model for total_amount using purchase date as predictor
+M1_3 <- lm(total_amount~Purchase_Date, data =train_1)
+
+print("M1_1")
+````
+
+```{r}
+print("M1_1")
+summary(M1_1)
+print("M1_2")
+summary(M1_2)
+print("M1_3")
+summary(M1_3)
+```
+
+```{r}
+cat("Mean Squared Error (MSE):", mean(residuals(M1_3)^2), "\n")
+```
+
+```{r}
+# create new df for fitted df and assign value type for the the dataset
+fit_df <- data.frame(train_1[-5]) %>% mutate(type="Fitted")
+
+# create new df for prediction df and assign value type for the the dataset
+testset_all <- data.frame(test_1[-5]) %>% 
+  mutate(type="Predicted")
+
+# create new df for prediction row
+Aug2022<-data.frame(Purchase_Date = "2022/08/01",
+                    month_number="08",
+                    year_number= "2022",
+                    total_amount=0,
+                    type="Predicted")
+
+# convert the date column to the right date format to merge with predicted df later
+Aug2022$Purchase_Date <- as.Date(Aug2022$Purchase_Date,format = "%Y/%m/%d")
+
+## Use predict function + model we just built and apply to Aug 2022 data frame
+fit_df$total_amount <- predict(M1_1, train_1)
+testset_all$total_amount <- predict(M1_1, test_1)
+pred <- predict(M1_1, Aug2022)
+Aug2022$total_amount <- pred
+
+# combine the predicted df with the new predicted row
+testset_all <- rbind(testset_all, Aug2022)
+testset_all
+```
+
+```{r}
+# create new column to specify value type for the dataset
+train_test$type <- "Real"
+
+# make sure our variables have the right format for plotting
+fit_df <- as.data.frame(fit_df)
+testset_all <- as.data.frame(testset_all)
+
+# merge all necessary variables into 1 single df variable with rbind
+Final_data <- rbind(fit_df, testset_all,train_test)
+
+# Plot goodness of the fit from our ML R
+Final_data %>%
+  filter(Purchase_Date < as.Date("2022-08-01"))  %>%
+  filter(!(type %in% "Predicted")) %>%
+  ggplot() +
+  aes(x = Purchase_Date, y = total_amount, colour = type) +
+  geom_line(size = 0.5) +
+  scale_color_hue(direction = 1) +
+  labs(
+    x = "Year",
+    y = "Total Amount Amount",
+    title = "Fit from MLR"
+  ) +
+  theme_light()
+```
+
+```{r}
+# Plot the comparison between our MLR prediction on test set with the actual values
+ggplot(Final_data) +
+  aes(x = Purchase_Date, y = total_amount, colour = type) +
+  geom_line(size = 0.5) +
+  scale_color_hue(direction = 1) +
+  labs(x = "Year", y = "Total amount") +
+  theme_light() +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+```{r}
+#evaluation metrics for train vs prediction
+evaluation_metrics_train <- data.frame(
+  evaluation_metrics = "Fitted value vs Train data",
+  R2 = summary(M1_1)$r.squared,
+  RMSE = modelr::rmse(M1_1, data = train_1),
+  MAE = modelr::mae(M1_1, data = train_1)
+)
+evaluation_metrics_test <- data.frame(
+  evaluation_metrics = "Predictions vs Test data",
+  R2 = summary(M1_1)$r.squared,
+  RMSE = modelr::rmse(M1_1, data = test_1),
+  MAE = modelr::mae(M1_1, data = test_1)
+)
+evaluation_metrics <- rbind(evaluation_metrics_train, evaluation_metrics_test)
+evaluation_metrics
+```
+
+```{r}
+#evaluation metrics for train vs prediction
+evaluation_metrics_train <- data.frame(
+  evaluation_metrics = "Fitted value vs Train data",
+  R2 = summary(M1_1)$r.squared,
+  RMSE = modelr::rmse(M1_1, data = train_1),
+  MAE = modelr::mae(M1_1, data = train_1)
+)
+evaluation_metrics_test <- data.frame(
+  evaluation_metrics = "Predictions vs Test data",
+  R2 = summary(M1_1)$r.squared,
+  RMSE = modelr::rmse(M1_1, data = test_1),
+  MAE = modelr::mae(M1_1, data = test_1)
+)
+evaluation_metrics <- rbind(evaluation_metrics_train, evaluation_metrics_test)
+evaluation_metrics
+```
+
+```{r}
+# Model test error
+test_error <- (evaluation_metrics_test$RMSE)/mean(test_1$total_amount) 
+test_error
+```
+
+```{r}
+#Eliminating customer names, as the customer ID serves as the unique identifier, and age has been replaced with the new 'AgeGroup' field 
+cleaned_data <- cleaned_data[, !colnames(cleaned_data) %in% c( "Customer.Name", "Age")]
+
+# Filter Churn 1 and Churn 0 samples
+churn_1_samples <- cleaned_data[cleaned_data$Churn == 1, ]
+churn_0_samples <- cleaned_data[cleaned_data$Churn == 0, ]
+
+# Randomly select 5000 samples from each class
+set.seed(42)
+churn_1_samples <- churn_1_samples[sample(nrow(churn_1_samples), 5000), ]
+churn_0_samples <- churn_0_samples[sample(nrow(churn_0_samples), 5000), ]
+
+# merging the sampled datasets
+balanced_data <- rbind(churn_1_samples, churn_0_samples)
+
+# Shuffle the rows to mix Churn 1 and Churn 0 samples
+balanced_data <- cleaned_data[sample(nrow(balanced_data)), ]
+
+#convert categorical value to factors
+balanced_data$Gender <- as.factor(balanced_data$Gender)
+balanced_data$Product.Category <- as.factor(balanced_data$Product.Category)
+balanced_data$Payment.Method <- as.factor(balanced_data$Payment.Method)
+
+# Run Boruta on the  dataset
+boruta_output <- Boruta(Churn ~ ., data=na.omit(balanced_data), doTrace=0)
+
+print(boruta_output)
+```
+
+```{r}
+# identify significant variables
+boruta_signif <- getSelectedAttributes(boruta_output, withTentative = TRUE)
+roughFixMod <- TentativeRoughFix(boruta_output)
+```
+
+```{r}
+boruta_signif <- getSelectedAttributes(roughFixMod)
+
+# Variable Importance Scores
+imps <- attStats(roughFixMod)
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+head(imps2[order(-imps2$meanImp), ])
+```
+```{r}
+# filtering out all not important columns
+balanced_data <- balanced_data %>%
+  select(boruta_signif,"Churn")
+```
+
+
+
+
+```{r}
+# Split the data into training and testing sets
+set.seed(42)
+splitIndex <- createDataPartition(balanced_data$Churn, p = 0.8, list = FALSE)
+train_data <- balanced_data[splitIndex, ]
+test_data <- balanced_data[-splitIndex, ]
+```
+
+```{r}
+# Convert categorical columns to numeric
+train_data <- train_data %>% mutate(across(-Churn, as.numeric))
+test_data <- test_data %>% mutate(across(-Churn, as.numeric))
+
+
+# Feature scaling for numerical columns
+numeric_cols <- sapply(train_data, is.numeric)
+train_data[, numeric_cols] <- scale(train_data[, numeric_cols])
+test_data[, numeric_cols] <- scale(test_data[, numeric_cols])
+
+
+print("Counts of Churn in test_data:")
+prop.table(table(test_data$Churn))
+```
+
+```{r}
+train_data_balanced <- SMOTE(Churn ~ ., train_data, perc.over = 100, perc.under = 200)
+
+# Compare counts of Churn in both classes
+cat("Comparison of Churn counts in both classes:\n")
+prop.table(table(train_data_balanced$Churn))
+```
+
+```{r}
+train_labels <- train_data$Churn
+test_labels <- test_data$Churn
+
+train_matrix <- xgb.DMatrix(data = as.matrix(train_data %>% select(-Churn)), label = train_labels)
+test_matrix <- xgb.DMatrix(data = as.matrix(test_data %>% select(-Churn)), label = test_labels)
+
+```
+
+```{r}
+params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",
+  eval_metric = "logloss",
+  eta = 0.3,
+  max_depth = 6,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+```
+
+```{r}
+xgb_model <- xgb.train(
+  params = params,
+  data = train_matrix,
+  nrounds = 100,
+  watchlist = list(train = train_matrix, eval = test_matrix),
+  early_stopping_rounds = 10,
+  print_every_n = 10
+)
+```
+
+```{r}
+# Create the balanced random forest model
+sampsize <- min(table(train_data$Churn))
+rf_model <- randomForest(Churn ~ ., data = train_data, strata = train_data$Churn, sampsize = sampsize, ntree = 100)
+rf_predictions <- predict(rf_model, newdata = test_data, type = "response")
+```
+
+```{r}
+# RandomForest Model
+rf_model <- randomForest(Churn ~ ., data = train_data_balanced, ntree = 500, mtry = 3)
+rf_predictions <- predict(rf_model, newdata = test_data, type = "response")
+```
+
+
+```{r}
+# XGBoost Model
+# Convert data to DMatrix format
+train_data_balanced$Churn <- factor(train_data_balanced$Churn, levels = c("No Churn", "Churn"), labels = c(0, 1))
+
+# Convert data to DMatrix format
+dtrain <- xgb.DMatrix(data = as.matrix(train_data_balanced[, -which(names(train_data_balanced) == "Churn")]), label = train_data_balanced$Churn)
+dtest <- xgb.DMatrix(data = as.matrix(test_data[, -which(names(test_data) == "Churn")]), label = test_data$Churn)
+
+
+# Model 4: XGBoost model
+xgb_params <- list(objective = "binary:logistic", eval_metric = "logloss")
+xgb_model <- xgb.train(params = xgb_params, data = dtrain, nrounds = 300)
+
+xgb_predictions <- predict(xgb_model, newdata = as.matrix(test_data[, -which(names(test_data) == "Churn")]))
+```
+
+```{r}
+confusion_matrix_rf <- confusionMatrix(rf_predictions, test_data$Churn)
+```
+
+```{r}
+print("Confusion Matrix for Random Forest:")
+print(confusion_matrix_rf)
+```
+
+```{r}
+# Testing accuracy for Random Forest
+test_predictions_rf <- predict(rf_model, newdata = test_data)
+test_accuracy_rf <- sum(test_predictions_rf == test_data$Churn) / nrow(test_data) * 100
+cat("Testing Accuracy for Random Forest:", test_accuracy_rf, "%\n")
+```

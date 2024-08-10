@@ -1,0 +1,82 @@
+---
+title: "Recommender System"
+author: "Fadly"
+date: "2024-08-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(recommenderlab)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+```
+
+```{r}
+# Memuat paket
+library(recommenderlab)
+
+# Membaca data
+data <- read.csv("https://raw.githubusercontent.com/imomenujung/R-Projects/main/Recommender%20System/amazon.csv")
+str(data)
+```
+
+```{r}
+head(data)
+```
+
+```{r}
+data_baru <- data[, c("product_id", "rating", "user_id")]
+```
+
+```{r}
+head(data_baru)
+```
+
+```{r}
+na_count <- sapply(data_baru, function(x) sum(is.na(x))) 
+print(na_count)
+```
+
+```{r}
+# Hapus Baris Na
+cleaned_data <- na.omit(data_baru)
+```
+
+```{r}
+na_count <- sapply(cleaned_data, function(x) sum(is.na(x))) 
+print(na_count)
+```
+
+```{r}
+# Mengubah data menjadi format yang sesuai untuk recommenderlab
+ratingmat <- as.matrix(data_baru, "realRatingMatrix")
+ratingmat
+```
+
+```{r}
+
+```
+
+```{r}
+# Convert to a matrix
+rating_matrix <- as.matrix(data_wide[, -1])  # Exclude the CustomerID column
+rownames(rating_matrix) <- data_wide$CustomerID
+```
+
+
+
+```{r}
+model <- Recommender(data = ratingmat, method = "UBCF")
+```
+
+
+
+
+
+
+

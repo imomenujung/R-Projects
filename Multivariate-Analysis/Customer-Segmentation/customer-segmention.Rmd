@@ -1,0 +1,373 @@
+---
+title: "Customer Segmentation"
+author: "Fadly"
+date: "2024-08-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(gridExtra)  # For arranging multiple plots
+library(fastDummies)
+library(factoextra)
+library(reshape2)
+library(cluster)
+```
+
+```{r}
+pelanggan <- read.csv("https://raw.githubusercontent.com/imomenujung/R-Projects/main/Multivariate-Analysis/Customer-Segmentation/Mall_Customers.csv", sep=",")
+pelanggan
+```
+
+```{r}
+str(pelanggan)
+```
+
+## Drop Customer ID
+```{r}
+df <- pelanggan %>% select(-CustomerID)
+df
+```
+
+```{r}
+# Plot for Age
+p1 <- ggplot(df, aes(x=Age)) +
+  geom_histogram(aes(y=..count..), binwidth=5, fill="skyblue", color="black", alpha=0.7) +
+  geom_density(aes(y=..count..*5), color="blue", size=1) + 
+  theme_minimal()
+
+# Plot for Annual Income
+p2 <- ggplot(df, aes(x=`Annual.Income..k..`)) +
+  geom_histogram(aes(y=..count..), binwidth=10, fill="lightblue", color="black", alpha=0.7) +
+  geom_density(aes(y=..count..*10), color="blue", size=1) + 
+  theme_minimal()
+
+# Plot for Spending Score
+p3 <- ggplot(df, aes(x=`Spending.Score..1.100.`)) +
+  geom_histogram(aes(y=..count..), binwidth=10, fill="slateblue", color="black", alpha=0.7) +
+  geom_density(aes(y=..count..*10), color="blue", size=1) + 
+  theme_minimal()
+
+# Arrange plots in a grid
+grid.arrange(p1, p2, p3, ncol=3)
+
+```
+
+```{r}
+# Convert data to long format for plotting
+df_long <- reshape2::melt(df)
+
+# Create notched boxplot
+ggplot(df_long, aes(x=value, y=variable, fill=variable)) +
+  geom_boxplot(notch=TRUE, color="purple") +
+  scale_fill_manual(values=c("skyblue", "lightblue", "blue")) +
+  theme_minimal() +
+  theme(legend.position="none")
+```
+Most of customers have age between 30 and 35. And the average age is 39.
+
+The average annual income is arround 61 K$.
+Most of customers have an spending score between 45 and 55. The average spending score is arround 50.
+There is only one outliers for the variable "Annual Income".
+
+
+
+```{r}
+# Data for donut chart
+gender_counts <- df %>% count(Gender)
+gender_counts$percentage <- round(100 * gender_counts$n / sum(gender_counts$n), 2)
+
+# Donut chart
+donut_plot <- ggplot(gender_counts, aes(x=2, y=percentage, fill=Gender)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar(theta="y") +
+  geom_text(aes(label=paste0(percentage, "%")), position=position_stack(vjust=0.5)) +
+  xlim(0.5, 2.5) +
+  theme_void() +
+  theme(legend.position="none") +
+  labs(title="Donut Chart") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", color="blue")) +
+  scale_fill_manual(values=c("lightblue", "blue"))
+
+# Bar plot (Histogram)
+histogram_plot <- ggplot(df, aes(x=Gender, fill=Gender)) +
+  geom_bar(width=0.7, color="black", aes(y = ..count..)) +
+  geom_text(stat='count', aes(label=..count..), vjust=-0.5, color="black") +
+  theme_minimal() +
+  labs(title="Histogram", y="Counts", x="Gender") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", color="blue")) +
+  scale_fill_manual(values=c("lightblue", "blue")) +
+  theme(legend.position="none")
+
+# Arrange the plots side by side
+grid.arrange(donut_plot, histogram_plot, ncol=2)
+```
+As we can see 56% of customers are female, while 44% are mall.
+
+
+```{r}
+ggplot(df, aes(x = Age, y = Annual.Income..k.., color = Gender)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +  # Add regression line
+  labs(title = "Age & Annual Income with line of best fit grouped by Gender",
+       x = "Age", y = "Annual Income (k$)") +
+  scale_color_manual(values = c("Male" = "#A63446", "Female" = "#17806D")) +  # Set colors
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))  # Center title
+```
+
+
+
+```{r}
+ggplot(df, aes(x = Age, y = Spending.Score..1.100., color = Gender)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +  # Add regression line with confidence interval
+  labs(title = "Age & Spending Score with line of best fit grouped by Gender",
+       x = "Age", y = "Spending Score (1-100)") +
+  scale_color_manual(values = c("Male" = "#A63446", "Female" = "#17806D")) +  # Set colors
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +  # Center title
+  theme(legend.position = "right")  # Adjust legend position
+```
+
+```{r}
+ggplot(df, aes(x = Annual.Income..k.., y = Spending.Score..1.100., color = Gender)) +
+  geom_point(alpha = 0.7) +  # Adjust alpha for point transparency
+  geom_smooth(method = "lm", se = TRUE) +  # Add regression line with confidence interval
+  labs(title = "Annual Income & Spending Score with line of best fit grouped by Gender",
+       x = "Annual Income (k$)", y = "Spending Score (1-100)") +
+  scale_color_manual(values = c("Male" = "#A63446", "Female" = "#17806D")) +  # Set colors
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))  # Center title
+```
+
+```{r}
+# Calculate correlation matrix
+
+df_ng <- df %>% select(-Gender)
+cor_matrix <- cor(df_ng)
+
+# Melt the correlation matrix for ggplot
+melted_cor <- melt(cor_matrix)
+
+# Create the heatmap
+ggplot(data = melted_cor, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "purple", high = "yellow", mid = "green", midpoint = 0, limit = c(-1, 1)) +
+  geom_text(aes(Var2, Var1, label = round(value, 2)), color = "black", size = 3) +
+  labs(title = "Correlation Heatmap", x = "", y = "") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Data Preprocessing
+```{r}
+# Select columns
+col_names <- c("Annual.Income..k..", "Age", "Spending.Score..1.100.")
+features <- df[, col_names]
+
+# Standardize features (equivalent to StandardScaler)
+scaler <- scale(features)  # Scales and centers features
+
+# Create scaled data frame
+scaled_features <- data.frame(scaler)  # Convert scaled matrix to data frame
+colnames(scaled_features) <- col_names  # Set column names
+
+scaled_features
+
+```
+
+```{r}
+# Extract gender column
+gender <- df$Gender
+
+# Combine gender with scaled features
+newdf <- bind_cols(scaled_features, Gender = gender)
+
+# One-hot encoding
+newdf <- newdf %>% 
+  mutate(Gender = as.factor(Gender)) %>% 
+  mutate(Gender = relevel(Gender, ref = "Male")) %>%  # Set reference level
+  dummy_cols(select_columns = "Gender", remove_selected_columns = TRUE)
+
+# Drop the first dummy variable
+
+# Display the head of the DataFrame
+head(newdf)
+```
+
+
+```{r}
+newdf <- newdf %>% select(-Gender_Male)
+newdf
+```
+
+
+# Building K-Means Clustering
+
+```{r}
+# Tentukan Cluster
+jumlah_klaster <- c(1:9)  #Vektor yang berisikan jumlah klaster yang ingin dilihat nilai dari total within-cluster sum of squares
+within_ss <- c()  #Vektor kosong yang akan diisi nilai total within-cluster sum of squares
+for (i in jumlah_klaster) {
+  within_ss <- c(within_ss, kmeans(x = newdf, centers = i, nstart = 25)$tot.withinss)
+}
+
+plot(x = jumlah_klaster, y = within_ss, type = "b", xlab = "Number of Cluster",
+     ylab = "Total Within Sum of Squares", main = "Elbow Plot")
+```
+
+```{r}
+# Tentukan Cluster
+jumlah_klaster <- c(1:9)  #Vektor yang berisikan jumlah klaster yang ingin dilihat nilai dari total within-cluster sum of squares
+within_ss <- c()  #Vektor kosong yang akan diisi nilai total within-cluster sum of squares
+for (i in jumlah_klaster) {
+  within_ss <- c(within_ss, pam(newdf, i)$tot.withinss)
+}
+
+plot(x = jumlah_klaster, y = within_ss, type = "b", xlab = "Number of Cluster",
+     ylab = "Total Within Sum of Squares", main = "Elbow Plot")
+```
+
+```{r}
+newdf <- filtered_df
+# K-means
+set.seed(123)
+kmeans_clustering <- kmeans(x = newdf, centers = 4, nstart = 25)  #parameter nstart digunakan untuk memberitahu fungsi berapa kali inisiasi centroid awal (secara acak) yang akan dibentuk dan centers digunakan untuk memberitahu fungsi berapa jumlah klaster yang akan dibentuk.
+kmeans_clustering
+
+# Visualisasi Cluster
+fviz_cluster(kmeans_clustering, data = newdf, 
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+)
+```
+
+```{r}
+set.seed(42)  # Untuk reproduktibilitas
+km_result <- eclust(newdf, "kmeans", k = 4 ,nstart = 42, graph = TRUE)  # Menggunakan K-Means++ dengan 3 cluster
+
+# Visualisasi hasil clustering
+fviz_cluster(km_result, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal())
+```
+
+```{r}
+set.seed(42)  # Untuk reproduktibilitas
+kmedoids_result <- pam(newdf, k = 4)  # Menggunakan K-Medoids dengan 3 cluster
+
+# Melihat hasil clustering
+print(kmedoids_result)
+
+# Melihat cluster yang dihasilkan
+print(kmedoids_result$clustering)
+
+fviz_cluster(kmedoids_result, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal())
+```
+
+```{r}
+set.seed(42)  # For reproducibility
+km_result <- eclust(newdf, "kmeans", k = 4 ,nstart = 25, graph = TRUE) 
+
+# Calculate the silhouette score
+silhouette_score <- silhouette(km_result$cluster, dist(newdf))
+
+# Calculate the average silhouette width (which is the silhouette score)
+avg_silhouette_score <- mean(silhouette_score[, "sil_width"])
+
+# Print the silhouette score
+cat("Silhouette Score is:", avg_silhouette_score, "\n")
+```
+
+```{r}
+boxplot(newdf)
+```
+```{r}
+# Hapus Outlier
+Q1 <- apply(newdf, 2, quantile, probs = 0.25)
+Q3 <- apply(newdf, 2, quantile, probs = 0.75)
+IQR <- Q3 - Q1
+
+# Tentukan batas bawah dan atas untuk outlier
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+```
+
+```{r}
+filtered_df <- newdf
+for(i in 1:ncol(newdf)) {
+  filtered_df <- filtered_df[filtered_df[,i] >= lower_bound[i] & filtered_df[,i] <= upper_bound[i], ]
+}
+
+boxplot(filtered_df, main = "After Outlier Removal")
+```
+
+
+```{r}
+# Melakukan PCA
+pca_result <- prcomp(newdf, scale. = TRUE)
+
+```
+
+```{r}
+explained_variance <- (pca_result$sdev)^2 / sum((pca_result$sdev)^2)
+explained_variance
+```
+
+```{r}
+# Menghitung varians kumulatif
+cumulative_variance <- cumsum(explained_variance)
+cumulative_variance
+```
+
+```{r}
+# Membuat scree plot
+plot(cumulative_variance, type = 'b', xlab = 'Number of Components', ylab = 'Cumulative Variance Explained', 
+     main = 'Scree Plot')
+abline(h = 0.9, col = 'red', lty = 2)  # Garis untuk threshold 90% varians
+```
+
+```{r}
+# Menentukan jumlah komponen yang akan digunakan (misalnya 2 atau 3 komponen pertama)
+pca_data <- data.frame(pca_result$x[, 1:3])  # Menggunakan 2 komponen pertama
+```
+
+```{r}
+# Melakukan clustering pada data PCA
+set.seed(42)  # Untuk reproduktibilitas
+kmeans_model <- kmeans(pca_data, centers = 4, nstart = 25)  # Misalnya 3 cluster
+```
+
+```{r}
+silhouette_score <- silhouette(kmeans_model$cluster, dist(pca_data))
+avg_silhouette_score <- mean(silhouette_score[, "sil_width"])
+print(avg_silhouette_score)
+```
+
+```{r}
+set.seed(42)  # Untuk reproduktibilitas
+kmedoids_result <- pam(pca_data, k = 4)  # Menggunakan K-Medoids dengan 3 cluster
+
+# Melihat hasil clustering
+print(kmedoids_result)
+
+# Melihat cluster yang dihasilkan
+print(kmedoids_result$clustering)
+
+fviz_cluster(kmedoids_result, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal())
+```
+```{r}
+silhouette_score <- silhouette(kmedoids_result$cluster, dist(pca_data))
+avg_silhouette_score <- mean(silhouette_score[, "sil_width"])
+print(avg_silhouette_score)
+```

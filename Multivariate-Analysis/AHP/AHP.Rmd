@@ -1,0 +1,14 @@
+---
+title: "AHP"
+author: "Fadly Mochammad Taufiq"
+date: "2024-02-21"
+output: html_document
+---
+
+```{r}
+library(ahpsurvey)
+```
+
+```{r}
+
+```
