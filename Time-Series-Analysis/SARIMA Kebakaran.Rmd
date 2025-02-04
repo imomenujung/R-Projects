@@ -1,0 +1,448 @@
+---
+title: "Peramalan Data Curah Hujan tahun 2003-2022"
+author: "Fadly Mochammad Taufiq"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# 1. Pendahuluan
+
+Proyek ini memprediksi kebakaran hutan bulanan dari tahun 2023 hingga 2029 menggunakan data historis (2003–2022) yang mencakup variabel curah hujan, temperatur minimum, dan maksimum. Model SARIMA dan SARIMAX dipilih untuk menangkap pola musiman dan efek variabel eksogen, masing-masing. SARIMA cocok untuk data musiman seperti curah hujan, sementara SARIMAX memungkinkan analisis lebih mendalam dengan mempertimbangkan temperatur. Kedua model ini diharapkan mampu mengidentifikasi pola risiko kebakaran yang signifikan, mendukung upaya mitigasi yang lebih efektif.
+
+# 2. Memuat Library
+
+Library yang digunakan pada Analisis ini antara lain
+
+forecast : digunakan untuk analisis dan peramalan deret waktu. Ini menyediakan berbagai fungsi untuk membuat model peramalan, termasuk ARIMA, ETS (Exponential Smoothing State Space), dan lain-lain. Library ini juga dilengkapi dengan metode evaluasi model seperti plot, accuracy, dan forecasting interval.
+
+tidyr : digunakan untuk merapikan data (data tidying). Ini memungkinkan pengguna untuk mengubah format data agar lebih mudah dianalisis, dengan memisahkan data ke dalam kolom atau baris yang lebih bermakna.
+
+dplyr : digunakan untuk manipulasi data. Ini menyediakan fungsi-fungsi yang efisien dan mudah dibaca untuk melakukan operasi seperti pemilihan kolom, penyaringan baris, pengelompokan data, dan agregasi.
+
+```{r load-libraries, echo=TRUE}
+# install.packages('forecast')
+# install.packages('tidyr')  
+# install.packages('dplyr')
+library(forecast)
+library(tidyr)
+library(dplyr)
+```
+
+# 3. Persiapan Data
+
+## Pengambilan Data
+
+Data mencakup informasi meteorologis yang terdiri dari beberapa parameter: PARAMETER, yang menunjukkan jenis pengukuran (semua nilai adalah "PRECTOTCORR"); tanggal pengukuran dalam format DD/MM/YYYY; koordinat lintang (LAT) dan bujur (LON) lokasi pengukuran; serta jumlah presipitasi (PREP) dalam milimeter dan suhu maksimum (TEMMAX) dan minimum (TEMMIN) dalam derajat Celsius. Contohnya, pada 01/01/2003 di lokasi dengan koordinat (-6.75, 136.75), presipitasi tercatat 5.27 mm, suhu maksimum 28.36°C, dan suhu minimum 27.77°C. Data ini dapat digunakan untuk analisis iklim, pemodelan cuaca, atau penelitian dalam bidang meteorologi dan klimatologi.
+
+```{r}
+berkas <- "/home/faggluyy/Downloads/Finalmerged.csv" # Sesuaikan dengan path file
+data <- read.csv(prec,sep=",")
+data
+```
+
+## Praproses Data
+Format data disesuaikan agar bisa diinput kedalam model analisis
+```{r}
+# Perubahan Tipe Data untuk Variabel Tanggal
+data$Merged <- as.Date(data$Merged,format = "%m/%d/%Y")
+
+# Menggabungkan Latitude dan Longitude menjadi Variabel baru untuk mengetahui Koordinat Lengkap
+data <- data %>%
+    mutate(Lokasi = paste(LAT, LON, sep = "/"))
+print(head(data))
+```
+
+Peramalan menggunakan data latih dilakukan untuk memperoleh informasi keakuratan model analisis sebelum melakukan prediksi secara langsung terhadap periode yang kita tidak tahu sebaran datanya
+
+## Pemilihan data sampel
+Karena data terdiri dari 63 Lokasi, maka kita ambil 1 lokasi sebagai contoh Untuk mengecek keakuratan model. Sampel yang diambil merupakan sampel dengan koordinat Latitude = -6.75 dan Longitude = 136.75
+
+```{r}
+# Proses Pengambilan Sampel 
+data_sampel <- data %>% filter(Lokasi == "-6.75/136.75")
+# Remove columns if they exist
+data_sampel <- data_sampel %>%
+  select(-any_of(c("PARAMETER", "LAT", "LON", "Lokasi")))
+print(data_sampel)
+data_sampel <- data_sampel[order(data_sampel$Merged), ]
+```
+
+Sebelum data diprediksi kita perlu membagi data yang kita punya menjadi data latih dan data uji. Data latih digunakan untuk mengetahui sebaran data dan data uji digunakan untuk menguji keakuratan model. Nanti keakuratan akan diketahui dari seberapa mirip hasil kita dengan data uji
+
+```{r data-preparation, echo=TRUE}
+# Ubah data ke Format Time Series
+data_sampel_ts <- ts(data_sampel[, c("PREP", "TEMMAX", "TEMMIN")], start = c(2003, 1), frequency = 12)
+
+# Membagi data menjadi data latih dan data uji
+
+forecast_horizon <- 24 # Ini adalah jumlah periode prediksi data 
+
+train_size <- nrow(data_sampel_ts) - forecast_horizon 
+train_data <- window(data_sampel_ts, end = c(2003 + floor((train_size - 1) / 12), (train_size - 1) %% 12 + 1))
+test_data <- window(data_sampel_ts, start = c(2003 + floor(train_size / 12), (train_size %% 12) + 1))
+```
+
+# 4. Pemodelan menggunakan SARIMA
+
+SARIMA, yang merupakan singkatan dari Seasonal AutoRegressive Integrated Moving Average, mampu menangani data dengan pola musiman, seperti perubahan suhu yang terjadi setiap bulan. SARIMA sangat cocok dengan data yang berpola musiman. Dengan menggunakan Auto ARIMA, pengguna tidak perlu memilih parameter secara manual, karena alat ini secara otomatis menemukan kombinasi terbaik untuk model berdasarkan data yang tersedia. Oleh karena itu, pengguna cukup memasukkan data ke dalam program, dan Auto ARIMA akan membantu dalam membangun model yang akurat untuk memprediksi masa depan.
+
+## Pemodelan
+
+```{r fit-model}
+# Fit model SARIMA menggunakan Auto ARIMA
+sarima_prep <- auto.arima(train_data[, "PREP"], seasonal = TRUE, stepwise = TRUE)
+sarima_temmax <- auto.arima(train_data[, "TEMMAX"], seasonal = TRUE, stepwise = TRUE)
+sarima_temmin <- auto.arima(train_data[, "TEMMIN"], seasonal = TRUE, stepwise = TRUE)
+
+# Ringkasan model
+summary(sarima_prep)
+summary(sarima_temmax)
+summary(sarima_temmin)
+```
+Berdasarkan hasil analisis model ARIMA yang diterapkan pada data presipitasi (PREP), suhu maksimum (TEMMAX), dan suhu minimum (TEMMIN), dapat disimpulkan bahwa model untuk presipitasi memiliki nilai MAE yang cukup tinggi sebesar 1.97 dan nilai MAPE yang tidak terdefinisi (Inf), menunjukkan bahwa model ini kurang mampu menangkap variasi dalam data. Sebaliknya, model untuk suhu maksimum menunjukkan kinerja yang lebih baik dengan MAE sebesar 0.29 dan MAPE sebesar 1.06%, yang mengindikasikan bahwa model tersebut cukup akurat dalam memprediksi nilai suhu maksimum. Model untuk suhu minimum juga menunjukkan kinerja yang baik dengan MAE sebesar 0.30 dan MAPE sebesar 1.11%. Secara keseluruhan, model untuk suhu maksimum dan minimum lebih baik dibandingkan dengan model presipitasi, sehingga dapat diharapkan prediksi untuk suhu lebih dapat diandalkan daripada untuk presipitasi dalam konteks ini.
+
+## Peramalan
+
+Berikut merupakan hasil peramalan untuk 24 Periode ke depan (2 tahun)
+```{r forecasting, echo=TRUE}
+# Forecast untuk data test
+
+prep_forecast <- forecast(sarima_prep, h = forecast_horizon)
+temmax_forecast <- forecast(sarima_temmax, h = forecast_horizon)
+temmin_forecast <- forecast(sarima_temmin, h = forecast_horizon)
+
+# Konversi hasil forecast menjadi data frame untuk memudahkan interpretasi
+
+forecast_start <- c(2003 + floor(train_size / 12), (train_size %% 12) + 1)
+forecast_dates <- seq(as.Date(paste0(forecast_start[1], "-", forecast_start[2], "-01")),
+                      by = "month", length.out = forecast_horizon)
+
+forecast_results <- data.frame(
+  Period = forecast_dates,
+  PREP_Forecast = prep_forecast$mean,
+  TEMMAX_Forecast = temmax_forecast$mean,
+  TEMMIN_Forecast = temmin_forecast$mean
+)
+
+# Tampilkan hasil forecast
+print(forecast_results)
+```
+
+## Evaluasi Model
+
+Evaluasi dilakukan untuk menguji kinerja model untuk prediksi dengan menggunakan nilai SMAPE dan MAE karena kedua metrik ini memberikan informasi yang lebih relevan dalam konteks data curah hujan. MAE (Mean Absolute Error) menghitung rata-rata kesalahan absolut antara nilai prediksi dan nilai aktual, sehingga memberikan gambaran yang jelas tentang seberapa jauh prediksi model dari realitas. Sementara itu, SMAPE (Symmetric Mean Absolute Percentage Error) juga mempertimbangkan proporsi kesalahan relatif terhadap nilai aktual, yang sangat berguna ketika data memiliki rentang nilai yang bervariasi. Dalam kasus curah hujan, di mana nilai dapat berkisar dari nol hingga nilai yang lebih tinggi, menggunakan MAE dan SMAPE membantu untuk menangkap kinerja model dengan lebih baik, terutama ketika ada nilai nol yang dapat membuat metrik lain, seperti MAPE, menjadi tidak terdefinisi.
+```{r model-evaluation, echo=TRUE}
+# Menghitung MAE
+mae <- function(actual, forecast) {
+  mean(abs(actual - forecast), na.rm = TRUE)
+}
+
+# Menghitung SMAPE
+smape <- function(actual, forecast) {
+  100 * mean(abs(forecast - actual) / ((abs(actual) + abs(forecast)) / 2), na.rm = TRUE)
+}
+
+# Hitung MAE dan SMAPE untuk PREP
+actual_prep <- test_data[, "PREP"]
+mae_prep <- mae(actual_prep, prep_forecast$mean)
+smape_prep <- smape(actual_prep, prep_forecast$mean)
+
+# Hitung MAE dan SMAPE untuk TEMMAX
+actual_temmax <- test_data[, "TEMMAX"]
+mae_temmax <- mae(actual_temmax, temmax_forecast$mean)
+smape_temmax <- smape(actual_temmax, temmax_forecast$mean)
+
+# Hitung MAE dan SMAPE untuk TEMMIN
+actual_temmin <- test_data[, "TEMMIN"]
+mae_temmin <- mae(actual_temmin, temmin_forecast$mean)
+smape_temmin <- smape(actual_temmin, temmin_forecast$mean)
+
+# Tampilkan hasil MAE dan SMAPE
+cat("MAE for PREP:", mae_prep, "\n")
+cat("SMAPE for PREP:", smape_prep, "\n")
+cat("MAE for TEMMAX:", mae_temmax, "\n")
+cat("SMAPE for TEMMAX:", smape_temmax, "\n")
+cat("MAE for TEMMIN:", mae_temmin, "\n")
+cat("SMAPE for TEMMIN:", smape_temmin, "\n")
+```
+Berdasarkan hasil evaluasi kinerja model yang diterapkan pada data curah hujan (PREP), suhu maksimum (TEMMAX), dan suhu minimum (TEMMIN), dapat disimpulkan bahwa model untuk curah hujan menunjukkan performa yang kurang baik, dengan nilai MAE sebesar 2.22 dan SMAPE mencapai 41.93%. Angka ini mengindikasikan adanya kesalahan prediksi yang signifikan, sehingga model ini tidak cukup akurat dalam memprediksi curah hujan. Sebaliknya, model untuk suhu maksimum dan suhu minimum menunjukkan kinerja yang lebih baik, dengan MAE masing-masing sebesar 0.58 dan 0.57 serta SMAPE sebesar 2.11% untuk keduanya. Hal ini menunjukkan bahwa model dapat diandalkan dalam memprediksi suhu, dengan kesalahan yang relatif kecil. Untuk meningkatkan akurasi prediksi curah hujan, PREP akan dicoba menggunakan model SARIMAX, yang diharapkan dapat menangkap pola musiman dan faktor eksternal lainnya yang mungkin memengaruhi curah hujan secara lebih efektif.
+
+## Visualisasi Hasil Peramalan
+
+```{r plot-forecast, echo=TRUE}
+library(ggplot2)
+# Plot hasil forecast untuk setiap variabel
+autoplot(prep_forecast) + ggtitle("Peramalan Curah Hujan dengan SARIMA") + xlab("Year") + ylab("Curah Hujan") +
+  theme_minimal()
+
+autoplot(temmax_forecast) + ggtitle("Peramalan Curah Hujan dengan SARIMA") + xlab("Year") + ylab("Suhu Maksimal") +
+  theme_minimal()
+
+autoplot(temmin_forecast) + ggtitle("Peramalan Curah Hujan dengan SARIMA") + xlab("Year") + ylab("Suhu Minimal") +
+  theme_minimal()
+```
+
+# 6. Pemodelan ARIMAX untuk data Curah Hujan 
+Karena akurasi yang rendah pada data curah hujan menggunakan SARIMA, maka dilakukan pemodelan ARIMAX untuk meningkatkan akurasi
+
+## Pemodelan 
+```{r}
+# Fit model ARIMAX menggunakan Auto ARIMA
+exog_data <- as.matrix(train_data[, c("TEMMAX", "TEMMIN")]) # Data Variabel Eksogen
+arimax_prep <- auto.arima(train_data[, "PREP"], seasonal = TRUE, stepwise = TRUE, xreg = exog_data)
+
+# Ringkasan model
+summary(arimax_prep)
+```
+
+## Peramalan
+```{r}
+# Forecast untuk data test
+exog_test <- as.matrix(test_data[, c("TEMMAX", "TEMMIN")]) # Data Variabel Eksogen
+arimax_forecast <- forecast(arimax_prep, h = forecast_horizon, xreg = exog_test)
+
+# Konversi hasil forecast menjadi data frame untuk memudahkan interpretasi
+
+forecast_start <- c(2003 + floor(train_size / 12), (train_size %% 12) + 1)
+forecast_dates <- seq(as.Date(paste0(forecast_start[1], "-", forecast_start[2], "-01")),
+                      by = "month", length.out = forecast_horizon)
+
+forecast_results <- data.frame(
+  Period = forecast_dates,
+  PREP_Forecast = arimax_forecast$mean
+)
+
+# Tampilkan hasil forecast
+print(forecast_results)
+```
+
+## Evaluasi Model
+```{r model-evaluation, echo=TRUE}
+# Menghitung MAE
+mae <- function(actual, forecast) {
+  mean(abs(actual - forecast), na.rm = TRUE)
+}
+
+# Menghitung SMAPE
+smape <- function(actual, forecast) {
+  100 * mean(abs(forecast - actual) / ((abs(actual) + abs(forecast)) / 2), na.rm = TRUE)
+}
+
+# Hitung MAE dan SMAPE untuk PREP
+actual_prep <- test_data[, "PREP"]
+mae_prep <- mae(actual_prep, arimax_forecast$mean)
+smape_prep <- smape(actual_prep, arimax_forecast$mean)
+
+
+# Tampilkan hasil MAE dan SMAPE
+cat("MAE for PREP:", mae_prep, "\n")
+cat("SMAPE for PREP:", smape_prep, "\n")
+```
+Berdasarkan hasil evaluasi model ARIMAX dan SARIMA, dapat disimpulkan bahwa model ARIMAX menunjukkan kinerja yang lebih baik dalam memprediksi curah hujan (PREP) dengan nilai MAE sebesar 1.55 dan SMAPE sebesar 21.90%, dibandingkan dengan model SARIMA yang memiliki MAE sebesar 2.22 dan SMAPE mencapai 41.93%. Peningkatan akurasi pada model SARIMAX menunjukkan bahwa pemanfaatan variabel eksogen, seperti suhu maksimum dan suhu minimum, berkontribusi positif dalam menangkap pola yang lebih kompleks dalam data curah hujan. Meskipun nilai MAE dan SMAPE pada model SARIMAX menunjukkan kinerja yang lebih baik, nilai SMAPE di atas 20% masih mengindikasikan bahwa prediksi belum sepenuhnya akurat dan dapat diperbaiki lebih lanjut. Oleh karena itu, disarankan untuk terus melakukan eksplorasi dan optimasi lebih lanjut, termasuk penambahan variabel eksternal lainnya atau penerapan teknik pemodelan lain seperti machine learning, untuk meningkatkan akurasi prediksi dan mendapatkan wawasan yang lebih dalam mengenai faktor-faktor yang memengaruhi curah hujan.
+
+## Visualisasi Hasil Peramalan Keseluruhan
+
+```{r plot-forecast, echo=TRUE}
+library(ggplot2)
+# Plot hasil forecast untuk setiap variabel
+autoplot(arimax_forecast) + ggtitle("Peramalan Curah Hujan dengan ARIMAX") + xlab("Year") + ylab("Curah Hujan") +
+  theme_minimal()
+
+autoplot(temmax_forecast) + ggtitle("Peramalan Curah Hujan dengan SARIMA") + xlab("Year") + ylab("Suhu Maksimal") +
+  theme_minimal()
+
+autoplot(temmin_forecast) + ggtitle("Peramalan Curah Hujan dengan SARIMA") + xlab("Year") + ylab("Suhu Minimal") +
+  theme_minimal()
+```
+# 7. Pengecekan Model untuk semua Lokasi
+
+```{r}
+# Inisialisasi tabel akhir kosong untuk menyimpan hasil
+all_results <- data.frame(
+  Location = character(),
+  MAPE_PREP = numeric(),
+  MAPE_TEMMAX = numeric(),
+  MAPE_TEMMIN = numeric(),
+  MAE_PREP = numeric(),
+  MAE_TEMMAX = numeric(),
+  MAE_TEMMIN = numeric(),
+  Model_Architecture = character(),
+  stringsAsFactors = FALSE
+)
+
+for (loc in unique_locations) {
+    # Data untuk lokasi tertentu
+    loc_data <- data %>% filter(Lokasi == loc)
+    
+    # Konversi ke format time series
+    loc_data_ts <- ts(loc_data[, c("PREP", "TEMMAX", "TEMMIN")], start = c(2003, 1), frequency = 12)
+    
+    # Membagi data menjadi train dan test
+    train_size <- nrow(loc_data_ts) - forecast_horizon
+    train_data <- window(loc_data_ts, end = c(2003 + floor((train_size - 1) / 12), (train_size - 1) %% 12 + 1))
+    test_data <- window(loc_data_ts, start = c(2003 + floor(train_size / 12), (train_size %% 12) + 1))
+    
+    # Fit ARIMAX untuk Curah Hujan
+    exog_data_train <- as.matrix(train_data[, c("TEMMAX", "TEMMIN")])
+    arimax_prep <- auto.arima(train_data[, "PREP"], seasonal = TRUE, xreg = exog_data_train)
+    pdq_prep <- arimax_prep$arma[1:3]
+    PDQ_prep <- arimax_prep$arma[4:6]
+    
+    # Fit SARIMA untuk Suhu Maksimum
+    sarima_temmax <- auto.arima(train_data[, "TEMMAX"], seasonal = TRUE)
+    pdq_temmax <- sarima_temmax$arma[1:3]
+    PDQ_temmax <- sarima_temmax$arma[4:6]
+    
+    # Fit SARIMA untuk Suhu Minimum
+    sarima_temmin <- auto.arima(train_data[, "TEMMIN"], seasonal = TRUE)
+    pdq_temmin <- sarima_temmin$arma[1:3]
+    PDQ_temmin <- sarima_temmin$arma[4:6]
+    
+    # Peramalan
+    exog_data_test <- as.matrix(test_data[, c("TEMMAX", "TEMMIN")])
+    prep_forecast <- forecast(arimax_prep, h = forecast_horizon, xreg = exog_data_test)
+    temmax_forecast <- forecast(sarima_temmax, h = forecast_horizon)
+    temmin_forecast <- forecast(sarima_temmin, h = forecast_horizon)
+    
+    # Hitung MAE dan MAPE
+    mae_prep <- mae(test_data[, "PREP"], prep_forecast$mean)
+    smape_prep <- smape(test_data[, "PREP"], prep_forecast$mean)
+    
+    mae_temmax <- mae(test_data[, "TEMMAX"], temmax_forecast$mean)
+    smape_temmax <- smape(test_data[, "TEMMAX"], temmax_forecast$mean)
+    
+    mae_temmin <- mae(test_data[, "TEMMIN"], temmin_forecast$mean)
+    smape_temmin <- smape(test_data[, "TEMMIN"], temmin_forecast$mean)
+    
+    # Membuat tabel untuk model Arsitektur
+    model_architecture <- paste0("ARIMAX for PREP (", paste(pdq_prep, collapse = ","), 
+                                 "), SARIMA for TEMMAX (", paste(pdq_temmax, collapse = ","), 
+                                 "), PDQ TEMMAX (", paste(PDQ_temmax, collapse = ","), 
+                                 "), SARIMA for TEMMIN (", paste(pdq_temmin, collapse = ","), 
+                                 "), PDQ TEMMIN (", paste(PDQ_temmin, collapse = ","), ")")
+    
+    # Append to results
+    all_results <- rbind(all_results, data.frame(
+      Location = loc,
+      MAPE_PREP = smape_prep,
+      MAPE_TEMMAX = smape_temmax,
+      MAPE_TEMMIN = smape_temmin,
+      MAE_PREP = mae_prep,
+      MAE_TEMMAX = mae_temmax,
+      MAE_TEMMIN = mae_temmin,
+      Model_Architecture = model_architecture
+    ))
+}
+
+# Tampilkan hasil akhir
+print(all_results)
+
+```
+
+# 8. Peramalan untuk 84 Periode ke depan (sampai tahun 2029)
+
+## SARIMA untuk data Suhu Maksimal
+```{r}
+library(lubridate) 
+# Menyiapkan Data Frame untuk Menyimpan Hasil Forecast
+all_forecast_results <- data.frame()
+
+# Mendapatkan daftar lokasi unik
+unique_locations <- unique(data$Lokasi)
+
+for (loc in unique_locations) {
+    # Mengambil data untuk lokasi tertentu
+    loc_data <- data %>% filter(Lokasi == loc) %>%
+        select(Merged, TEMMAX, TEMMIN)
+
+    # Membuat time series
+    loc_data_ts <- ts(loc_data[, c("TEMMAX", "TEMMIN")], start = c(2003, 1), frequency = 12)
+
+    # Membagi data menjadi train dan test
+    train_size <- nrow(loc_data_ts)  # Menyisakan 84 data untuk pengujian
+    train_data <- window(loc_data_ts, end = c(2003 + floor((train_size - 1) / 12), (train_size - 1) %% 12 + 1))
+    
+    # Fit model SARIMA menggunakan Auto ARIMA
+    sarima_temmax <- auto.arima(train_data[, "TEMMAX"], seasonal = TRUE, stepwise = TRUE)
+    sarima_temmin <- auto.arima(train_data[, "TEMMIN"], seasonal = TRUE, stepwise = TRUE)
+    
+    # Forecast untuk data test
+    forecast_horizon <- 84
+    temmax_forecast <- forecast(sarima_temmax, h = forecast_horizon)
+    temmin_forecast <- forecast(sarima_temmin, h = forecast_horizon)
+
+    # Menggabungkan hasil forecast ke dalam data frame
+    # Menggabungkan hasil forecast ke dalam data frame
+    
+    forecast_start <- c(2003 + floor(train_size / 12), (train_size %% 12) + 1)
+    forecast_dates <- seq(as.Date(paste0(forecast_start[1], "-", forecast_start[2], "-01")),
+                      by = "month", length.out = forecast_horizon)
+    
+    forecast_results <- data.frame(
+    Date = forecast_dates,
+    Location = loc,
+    TEMMAX_Forecast = as.numeric(temmax_forecast$mean),
+    TEMMIN_Forecast = as.numeric(temmin_forecast$mean))
+    
+    all_forecast_results <- rbind(all_forecast_results, forecast_results)
+}
+
+# Tampilkan hasil forecast
+print(all_forecast_results)
+```
+
+```{r}
+temp_data <- all_forecast_results
+temp_data$TEMMAX <- temp_data$TEMMAX_Forecast
+temp_data$TEMMIN <- temp_data$TEMMIN_Forecast
+```
+
+## ARIMAX untuk data Curah Hujan
+```{r}
+
+all_forecast <- data.frame()
+for (loc in unique_locations) {
+    # Filter data untuk memilih lokasi Spesifik
+    loc_data <- data %>% filter(Lokasi == loc) %>%
+        select(Merged, PREP,TEMMAX,TEMMIN)
+    
+    # Ubah data menjadi Time Series
+    loc_data_ts <- ts(loc_data[, c("PREP","TEMMAX", "TEMMIN")], start = c(2003, 1), frequency = 12)
+    
+    # Split into training and testing sets
+    forecast_horizon = 84
+    train_size <- nrow(loc_data_ts)
+    train_data <- window(loc_data_ts, end = c(2003 + floor((train_size - 1) / 12), (train_size - 1) %% 12 + 1))
+    
+    # Membuat Variabel Exogen
+    loc_exog_test <- temp_data %>% filter(Location == loc) %>%
+        select(TEMMAX, TEMMIN)
+    
+    exog_test <- as.matrix(loc_exog_test)
+    
+    # Melakukan Pemodelan
+    exog_data <- as.matrix(train_data[, c("TEMMAX", "TEMMIN")]) # Data Variabel Eksogen
+    arimax_prep <- auto.arima(train_data[, "PREP"], seasonal = TRUE, stepwise = TRUE, xreg = exog_data)
+    
+    # Peramalan
+    arimax_forecast <- forecast(arimax_prep, h = forecast_horizon, xreg = exog_test)
+    
+    # Membuat dataframe untuk hasil
+    forecast_start <- c(2003 + floor(train_size / 12), (train_size %% 12) + 1)
+    forecast_dates <- seq(as.Date(paste0(forecast_start[1], "-", forecast_start[2], "-01")),
+                      by = "month", length.out = forecast_horizon)
+    
+        forecast_results <- data.frame(
+        Date = forecast_dates,
+        Location = loc,
+        ARIMAX_Forecast = as.numeric(arimax_forecast$mean)
+    )
+    
+    # Buat Data Frame Final
+    all_forecast <- rbind(all_forecast, forecast_results)
+}
+```
+
+```{r}
+all_forecast
+```
